@@ -1,4 +1,5 @@
 import math
+import os
 import random
 from collections import deque
 
@@ -10,6 +11,105 @@ from PPlay.sprite import Sprite
 from PPlay.mouse import Mouse
 from PPlay.camera import Camera
 from fonte_pixel import renderizar, largura as largura_texto
+from PPlay.sound import Sound, Music, SoundManager
+
+SoundManager.inicializar()
+SoundManager.set_music_volume(55)
+SoundManager.set_sfx_volume(90)
+_sons = {}
+_musica_atual = [None]
+_camadas = []
+_camadas_som = []
+_camadas_nivel = [None]
+_vol_tensao = [0.0]
+mudo = False
+
+
+def som(nome):
+    if nome not in _sons:
+        _sons[nome] = Sound(os.path.join("sons", nome + ".wav"))
+    return _sons[nome]
+
+
+def tocar(nome):
+    s = som(nome)
+    s.set_volume(0 if mudo else 90)
+    s.play()
+
+
+def tocar_musica(nome, repete=True):
+    if _musica_atual[0] == nome:
+        return
+    _musica_atual[0] = nome
+    if nome is None:
+        pygame.mixer.music.fadeout(400)
+        return
+    Music(os.path.join("sons", "musica_" + nome + ".wav")).play(loops=-1 if repete else 0, fade_in_ms=600)
+    pygame.mixer.music.set_volume(0 if mudo else 0.55)
+
+
+def musica_desejada():
+    if estado == "MENU" or estado == "MAPA":
+        return "menu", True
+    if estado == "VITORIA":
+        return "vitoria", False
+    if estado == "DERROTA":
+        return "derrota", False
+    return "menu", True
+
+
+def iniciar_camadas():
+    parar_camadas()
+    base = pygame.mixer.Sound(os.path.join("sons", "natal_base.wav"))
+    tensao = pygame.mixer.Sound(os.path.join("sons", "natal_tensao_nivel" + str(nivel_atual + 1) + ".wav"))
+    _camadas[:] = [base.play(loops=-1), tensao.play(loops=-1)]
+    _camadas_som[:] = [base, tensao]
+    _camadas_nivel[0] = nivel_atual
+    _vol_tensao[0] = 0.0
+
+
+def parar_camadas():
+    for c in _camadas:
+        if c is not None:
+            c.stop()
+    _camadas[:] = []
+    _camadas_som[:] = []
+    _camadas_nivel[0] = None
+
+
+def atualizar_tensao(dt):
+    if len(_camadas) < 2:
+        return
+    if subterraneo:
+        alvo = 0.0
+    else:
+        dist = math.hypot(boss_cx - (nico_x + NICO_W / 2), boss_cy - (nico_y + NICO_H / 2))
+        prox = max(0.0, min(1.0, 1.0 - dist / (TAMANHO_TILE * 6)))
+        alvo = prox ** 1.5
+    _vol_tensao[0] += (alvo - _vol_tensao[0]) * min(1.0, dt * 3.0)
+    ganho = 0.0 if mudo else 1.0
+    _camadas[0].set_volume(0.0 if subterraneo else 0.4 * ganho)
+    _camadas[1].set_volume(_vol_tensao[0] * ganho)
+
+
+def atualizar_audio(dt):
+    global mudo
+    if apertou("M"):
+        mudo = not mudo
+        pygame.mixer.music.set_volume(0 if mudo else 0.55)
+    if estado == "JOGO":
+        if not _camadas or _camadas_nivel[0] != nivel_atual:
+            iniciar_camadas()
+        if subterraneo:
+            tocar_musica("caverna", True)
+        else:
+            tocar_musica(None)
+        atualizar_tensao(dt)
+    else:
+        parar_camadas()
+        nome, repete = musica_desejada()
+        tocar_musica(nome, repete)
+
 
 janela = Window(1200, 700)
 janela.set_title("Papai Cruel - Noite de Caos")
@@ -1403,6 +1503,7 @@ def construir_mapa_surf():
 
 
 def iniciar_nivel(indice):
+    tocar("sfx_clique")
     carregar_nivel(indice)
     resetar_camera()
     cam.follow(nico_atual, suavizacao=1.0)
@@ -1989,6 +2090,7 @@ carregar_nivel(0)
 resetar_camera()
 
 while True:
+    atualizar_audio(janela.delta_time())
     if estado == "MENU":
         desenhar_fundo_menu(janela.delta_time())
         desenhar_titulo_menu()
@@ -2071,8 +2173,10 @@ while True:
                 bloqueio_alcapao = False
         elif alcapoes.get(tile_nico):
             if subterraneo:
+                tocar("sfx_entrar")
                 sair_subterraneo()
             else:
+                tocar("sfx_entrar")
                 entrar_subterraneo(tile_nico)
             janela.update()
             continue
@@ -2094,6 +2198,7 @@ while True:
             desenhar_coletavel(c, "chave.png")
             if math.hypot(c.x + 16 - ncx, c.y + 16 - ncy) < RAIO_COLETA:
                 inventario_chaves += 1
+                tocar("sfx_chave")
                 chaves.remove(c)
                 popup(c.x + 16, c.y, "icone_chave.png", "+1", (255, 226, 120))
 
@@ -2101,6 +2206,7 @@ while True:
             desenhar_coletavel(m, "moeda.png")
             if math.hypot(m.x + 16 - ncx, m.y + 16 - ncy) < RAIO_COLETA:
                 moedas_coletadas += 1
+                tocar("sfx_moeda")
                 magia_natal = min(MAGIA_INICIAL, magia_natal + MAGIA_MOEDA)
                 moedas.remove(m)
                 popup(m.x + 16, m.y, "icone_estrela.png", f"+{MAGIA_MOEDA}", (130, 220, 255))
@@ -2109,6 +2215,7 @@ while True:
             desenhar_coletavel(p, "pocao.png")
             if math.hypot(p.x + 16 - ncx, p.y + 18 - ncy) < RAIO_COLETA:
                 magia_natal = min(MAGIA_INICIAL, magia_natal + MAGIA_POCAO)
+                tocar("sfx_pocao")
                 pocoes.remove(p)
                 popup(p.x + 16, p.y, "icone_estrela.png", f"+{MAGIA_POCAO}", (130, 220, 255))
 
@@ -2117,6 +2224,7 @@ while True:
             desenhar_coletavel(f, "fragmento.png")
             if math.hypot(f.x + 16 - ncx, f.y + 16 - ncy) < RAIO_COLETA:
                 fragmentos_coletados += 1
+                tocar("sfx_fragmento")
                 magia_natal = min(MAGIA_INICIAL, magia_natal + RECUPERA_FRAGMENTO)
                 fragmentos.remove(f)
                 popup(f.x + 16, f.y, "fragmento.png", f"{fragmentos_coletados}/{fragmentos_total}", (255, 150, 255))
@@ -2136,9 +2244,11 @@ while True:
             if apertou("ENTER", pygame.K_KP_ENTER) and resposta not in ("", "-"):
                 if int(resposta) in equacao[1]:
                     equacao_aberta = False
+                    tocar("sfx_acerto")
                     concluiu = True
                 else:
                     magia_natal -= 10
+                    tocar("sfx_erro")
                     erro_tempo = 1.5
                     resposta = ""
         elif apertou("E") and perto_do_livro():
@@ -2207,6 +2317,7 @@ while True:
                               HITBOX_ELFO[0], HITBOX_ELFO[1])
                 if sobrepoe(caixa_boss, caixa_elfo):
                     e.morrer()
+                    tocar("sfx_elfo")
                     pausa_papai = PAUSA_APOS_PEGAR_ELFO
                     caminho_boss = []
                     mostrar("Um elfo foi pego pelo Papai!")
@@ -2236,6 +2347,7 @@ while True:
                 tempo_protegido = PROTECAO_APOS_CAPTURA
                 equacao_aberta = False
                 resposta = ""
+                tocar("sfx_nico_pego")
                 mostrar("O Papai Cruel te pegou!")
 
         if subterraneo:

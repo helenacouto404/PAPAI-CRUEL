@@ -1,1 +1,4 @@
 Papai_Cruel/Trailer_Papai_Cruel/
+build/
+dist/
+*.spec
